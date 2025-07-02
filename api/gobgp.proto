@@ -112,7 +112,10 @@ service GobgpApi {
 
 message StartBgpRequest { Global global = 1; }
 
-message StopBgpRequest {}
+message StopBgpRequest {
+  // Allows the Graceful Restart procedure on the remote peers by not sending a NOTIFICATION message to GR-enabled peers.
+  bool allow_graceful_restart = 1;
+}
 
 message GetBgpRequest {}
 
