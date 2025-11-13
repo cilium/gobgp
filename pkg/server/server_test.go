@@ -696,42 +696,39 @@ func TestListPathEnableFiltered(test *testing.T) {
 }
 
 func TestListPathEnableMultipath(t *testing.T) {
-	nlri, err := bgp.NewIPAddrPrefix(netip.MustParsePrefix("10.0.0.0/24"))
-	require.NoError(t, err)
+	nlri := bgp.NewIPAddrPrefix(24, "10.0.0.0")
+	nh0 := bgp.NewPathAttributeNextHop("192.168.0.1")
+	nh1 := bgp.NewPathAttributeNextHop("192.168.0.2")
 
-	nh0, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr("192.168.0.1"))
-	require.NoError(t, err)
-
-	nh1, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr("192.168.0.2"))
-	require.NoError(t, err)
-
-	path0 := &apiutil.Path{
-		Family:  bgp.RF_IPv4_UC,
-		Nlri:    nlri,
-		PeerASN: 65001,
-		Attrs: []bgp.PathAttributeInterface{
+	path0, err := apiutil.NewPath(
+		nlri,
+		false,
+		[]bgp.PathAttributeInterface{
 			bgp.NewPathAttributeOrigin(0),
 			bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{
 				bgp.NewAsPathParam(2, []uint16{65001}),
 			}),
 			nh0,
 		},
-	}
+		time.Now(),
+	)
 	require.NoError(t, err)
+	path0.SourceAsn = 65001
 
-	path1 := &apiutil.Path{
-		Family:  bgp.RF_IPv4_UC,
-		Nlri:    nlri,
-		PeerASN: 65002,
-		Attrs: []bgp.PathAttributeInterface{
+	path1, err := apiutil.NewPath(
+		nlri,
+		false,
+		[]bgp.PathAttributeInterface{
 			bgp.NewPathAttributeOrigin(0),
 			bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{
 				bgp.NewAsPathParam(2, []uint16{65002}),
 			}),
 			nh1,
 		},
-	}
+		time.Now(),
+	)
 	require.NoError(t, err)
+	path0.SourceAsn = 65002
 
 	tests := []struct {
 		name         string
@@ -765,28 +762,33 @@ func TestListPathEnableMultipath(t *testing.T) {
 			require.NoError(t, err)
 			defer server.StopBgp(context.Background(), &api.StopBgpRequest{})
 
-			_, err = server.AddPath(apiutil.AddPathRequest{
-				Paths: []*apiutil.Path{path0, path1},
-			})
-			require.NoError(t, err)
+			for _, path := range []*api.Path{path0, path1} {
+				_, err = server.AddPath(context.TODO(), &api.AddPathRequest{
+					TableType: api.TableType_LOCAL,
+					Path:      path,
+				})
+				require.NoError(t, err)
+			}
 
 			err = server.ListPath(
-				apiutil.ListPathRequest{
-					TableType: api.TableType_TABLE_TYPE_LOCAL,
-					Family:    bgp.RF_IPv4_UC,
+				context.TODO(),
+				&api.ListPathRequest{
+					TableType: api.TableType_LOCAL,
+					Family: &api.Family{
+						Afi:  api.Family_AFI_IP,
+						Safi: api.Family_SAFI_UNICAST,
+					},
 				},
-				func(prefix bgp.NLRI, paths []*apiutil.Path) {
+				func(dest *api.Destination) {
 					// We should only see 10.0.0.0/24
-					p, ok := prefix.(*bgp.IPAddrPrefix)
-					require.True(t, ok)
-					require.Equal(t, netip.MustParsePrefix("10.0.0.0/24"), p.Prefix)
+					require.Equal(t, "10.0.0.0/24", dest.Prefix)
 
 					// We should have two paths
-					require.Len(t, paths, 2)
+					require.Len(t, dest.Paths, 2)
 
 					// Only one path should be marked as best
 					bestCount := 0
-					for _, path := range paths {
+					for _, path := range dest.Paths {
 						if path.Best {
 							bestCount++
 						}
